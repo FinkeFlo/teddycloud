@@ -14,6 +14,7 @@ services:
       - library:/teddycloud/data/library
       - firmware:/teddycloud/data/firmware
     restart: unless-stopped
+    entrypoint: /docker/docker-entrypoint.sh
 volumes:
   certs:
   config:
