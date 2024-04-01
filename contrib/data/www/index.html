@@ -1305,6 +1305,34 @@
                 this.fetchFileIndex(this.state.path, this.state.mode, true); // Refresh files after delete
             }
 
+            async renameSelectedFile() {
+                const oldName = window.prompt('Enter the current file name');
+                const newName = window.prompt('Enter the new file name');
+                if (!oldName || !newName) {
+                    return;
+                }
+            
+                try {
+                    const response = await fetch(`/api/fileRename`, {
+                        method: 'POST',
+                        headers: {
+                            'Content-Type': 'application/json',
+                        },
+                        body: JSON.stringify({ oldName: oldName.trim(), newName: newName.trim() }),
+                    });
+            
+                    if (response.ok) {
+                        this.fetchFileIndex(this.state.path, this.state.mode, true); // Refresh files
+                        this.showSuccess(true);
+                    } else {
+                        alert('Failed to rename file');
+                        this.showSuccess(false);
+                    }
+                } catch (err) {
+                    console.error('There was an error!', err);
+                }
+            }
+
 
             toggleFileSelection(file) {
                 this.setState(prevState => {
