@@ -5,8 +5,8 @@ services:
     hostname: teddycloud_dev
     image: ghcr.io/toniebox-reverse-engineering/teddycloud:latest
     ports:
-      - 180:80 #optional
-      - 1443:443 #Port is needed for the connection for the box
+      - 80:80 #optional
+      - 443:443 #Port is needed for the connection for the box
     volumes:
       - certs:/teddycloud/certs
       - config:/teddycloud/config
