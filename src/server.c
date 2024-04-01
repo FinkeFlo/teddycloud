@@ -77,6 +77,7 @@ request_type_t request_paths[] = {
     {REQ_POST, "/api/uploadFirmware", &handleApiUploadFirmware},
     {REQ_GET, "/api/patchFirmware", &handleApiPatchFirmware},
     {REQ_POST, "/api/fileUpload", &handleApiFileUpload},
+    {REQ_POST, "/api/fileRename", &handleApiFileRename},
     {REQ_POST, "/api/pcmUpload", &handleApiPcmUpload},
     {REQ_GET, "/api/fileIndexV2", &handleApiFileIndexV2},
     {REQ_GET, "/api/fileIndex", &handleApiFileIndex},
