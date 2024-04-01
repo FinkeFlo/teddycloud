@@ -26,6 +26,14 @@ else
 	build_arch:="$(shell arch)"
 endif
 
+
+ifdef RUNTIME_BASE_PATH
+	CFLAGS+=-DBASE_PATH=\"$(RUNTIME_BASE_PATH)\"
+endif
+ifdef CONFIG_RUNTIME_BASE_PATH
+	CFLAGS+=-DCONFIG_BASE_PATH=\"$(CONFIG_RUNTIME_BASE_PATH)\"
+endif
+
 ifeq ($(SHELL_ENV),cmd)
 build_rawDateTime:="${shell date /t} ${shell time /t}"
 else
@@ -79,8 +87,8 @@ ifeq ($(PLATFORM),linux)
 	CC_IN_OPT      = -c
 	OBJ_EXT        = $(OBJ_EXT)
 	LINK_LO_OPT    = @$(LINK_LO_FILE)
-	CC             = gcc
-	LD             = gcc
+	CC            ?= gcc
+	LD             = $(CC)
 	OBJ_EXT        = .o
 endif
 
@@ -130,11 +138,13 @@ CFLAGS_linux += $(OPTI_LEVEL)
 
 ## win32 specific headers/sources
 HEADERS_windows = 
-INCLUDES_windows = 
+INCLUDES_windows = \
+	-Isrc/platform/
 SOURCES_windows = \
 	src/platform/platform_$(PLATFORM).c\
 	src/cyclone/common/os_port_windows.c \
-	src/cyclone/common/fs_port_windows.c 
+	src/cyclone/common/fs_port_windows.c \
+	src/platform/getopt.c 
 LFLAGS_windows = /DEBUG:FULL
 CFLAGS_windows = /DEBUG:FULL /Zi /nologo -DWIN32 /D_UNICODE
 CFLAGS_windows += -DFFMPEG_DECODING
@@ -319,6 +329,7 @@ CYCLONE_SOURCES = \
 # remove cyclone sources for which modifications exist
 CYCLONE_SOURCES := $(filter-out \
 	cyclone/common/debug.c \
+	cyclone/common/error.c \
 	cyclone/cyclone_tcp/http/http_server.c \
 	cyclone/cyclone_tcp/http/http_server_misc.c \
 	cyclone/cyclone_ssl/tls_certificate.c \
@@ -328,6 +339,7 @@ CYCLONE_SOURCES := $(filter-out \
 # and add modified ones
 CYCLONE_SOURCES += \
 	src/cyclone/common/debug.c \
+	src/cyclone/common/error.c \
 	src/cyclone/cyclone_crypto/mpi.c \
 	src/cyclone/cyclone_tcp/http/http_server.c \
 	src/cyclone/cyclone_tcp/http/http_server_misc.c \
@@ -459,6 +471,10 @@ preinstall: clean build web_copy $(INSTALL_DIR)/ $(PREINSTALL_DIR)/
 		&& find . -name ".gitkeep" -type f -delete \
 		&& cd -
 
+ifeq ($(OS),Windows_NT)	
+web: 
+web_copy: 
+else
 web_clean: 
 	$(QUIET)$(ECHO) '[ ${GREEN}WEB${NC}  ] Clean TeddyCloud React Webinterface'
 	$(RM_R) $(CONTRIB_DIR)/$(WEB_DIR)
@@ -476,6 +492,7 @@ web_copy:
 	$(QUIET)$(ECHO) '[ ${GREEN}WEB${NC}  ] Copy TeddyCloud React Webinterface'
 	$(QUIET) $(MKDIR) $(PREINSTALL_DIR)/$(WEB_DIR)/
 	$(QUIET) $(CP_R) $(CONTRIB_DIR)/$(WEB_DIR)/* $(PREINSTALL_DIR)/$(WEB_DIR)/ 
+endif
 
 zip: preinstall
 	$(QUIET)$(ECHO) '[ ${GREEN}ZIP${NC}  ] Create release zip'

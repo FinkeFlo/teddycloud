@@ -41,6 +41,8 @@
 HttpConnection httpConnections[APP_HTTP_MAX_CONNECTIONS];
 HttpConnection httpsConnections[APP_HTTP_MAX_CONNECTIONS];
 
+size_t openRequestsLast = 0;
+
 enum eRequestMethod
 {
     REQ_ANY,
@@ -63,6 +65,8 @@ request_type_t request_paths[] = {
     {REQ_ANY, "/reverse", &handleReverse},
     /* web interface directory */
     {REQ_GET, "/content/download/", &handleApiContentDownload},
+    {REQ_GET, "/content/json/get/", &handleApiContentJsonGet},
+    {REQ_POST, "/content/json/set/", &handleApiContentJsonSet},
     {REQ_GET, "/content/json/", &handleApiContentJson},
     {REQ_GET, "/content/", &handleApiContent},
     /* custom API */
@@ -74,13 +78,16 @@ request_type_t request_paths[] = {
     {REQ_GET, "/api/patchFirmware", &handleApiPatchFirmware},
     {REQ_POST, "/api/fileUpload", &handleApiFileUpload},
     {REQ_POST, "/api/pcmUpload", &handleApiPcmUpload},
+    {REQ_GET, "/api/fileIndexV2", &handleApiFileIndexV2},
     {REQ_GET, "/api/fileIndex", &handleApiFileIndex},
     {REQ_GET, "/api/stats", &handleApiStats},
+    {REQ_GET, "/api/toniesJsonSearch", &handleApiToniesJsonSearch},
     {REQ_GET, "/api/toniesJsonUpdate", &handleApiToniesJsonUpdate},
     {REQ_GET, "/api/toniesJson", &handleApiToniesJson},
     {REQ_GET, "/api/toniesCustomJson", &handleApiToniesCustomJson},
     {REQ_GET, "/api/trigger", &handleApiTrigger},
     {REQ_GET, "/api/getIndex", &handleApiGetIndex},
+    {REQ_GET, "/api/getTagIndex", &handleApiTagIndex},
     {REQ_GET, "/api/getBoxes", &handleApiGetBoxes},
     {REQ_POST, "/api/assignUnknown", &handleApiAssignUnknown},
     {REQ_GET, "/api/get/", &handleApiGet},
@@ -108,21 +115,26 @@ error_t resGetData(const char_t *path, const uint8_t **data, size_t *length)
 
 error_t httpServerRequestCallback(HttpConnection *connection, const char_t *uri)
 {
+    size_t openRequests = ++openRequestsLast;
     error_t error = NO_ERROR;
 
     stats_update("connections", 1);
 
+    char *request_source;
     if (connection->tlsContext != NULL && osStrlen(connection->tlsContext->client_cert_issuer))
     {
         TRACE_DEBUG("Certificate authentication:\r\n");
         TRACE_DEBUG("  Issuer:     '%s'\r\n", connection->tlsContext->client_cert_issuer);
         TRACE_DEBUG("  Subject:    '%s'\r\n", connection->tlsContext->client_cert_subject);
         TRACE_DEBUG("  Serial:     '%s'\r\n", connection->tlsContext->client_cert_serial);
+        request_source = connection->tlsContext->client_cert_subject;
     }
     else
     {
         TRACE_DEBUG("No certificate authentication\r\n");
+        request_source = "unknown/web";
     }
+    TRACE_DEBUG("Started server request to %s, request %" PRIuSIZE ", by %s\r\n", uri, openRequests, request_source);
 
     TRACE_DEBUG(" >> client requested '%s' via %s \n", uri, connection->request.method);
 
@@ -268,44 +280,49 @@ error_t httpServerRequestCallback(HttpConnection *connection, const char_t *uri)
 
     connection->response.keepAlive = connection->request.keepAlive;
 
-    for (size_t i = 0; i < sizeof(request_paths) / sizeof(request_paths[0]); i++)
+    do
     {
-        size_t pathLen = osStrlen(request_paths[i].path);
-        if (!osStrncmp(request_paths[i].path, uri, pathLen) && ((request_paths[i].method == REQ_ANY) || (request_paths[i].method == REQ_GET && !osStrcasecmp(connection->request.method, "GET")) || (request_paths[i].method == REQ_POST && !osStrcasecmp(connection->request.method, "POST"))))
+        bool handled = false;
+        for (size_t i = 0; i < sizeof(request_paths) / sizeof(request_paths[0]); i++)
         {
-            return (*request_paths[i].handler)(connection, uri, connection->request.queryString, client_ctx);
+            size_t pathLen = osStrlen(request_paths[i].path);
+            if (!osStrncmp(request_paths[i].path, uri, pathLen) && ((request_paths[i].method == REQ_ANY) || (request_paths[i].method == REQ_GET && !osStrcasecmp(connection->request.method, "GET")) || (request_paths[i].method == REQ_POST && !osStrcasecmp(connection->request.method, "POST"))))
+            {
+                error = (*request_paths[i].handler)(connection, uri, connection->request.queryString, client_ctx);
+                if (error == ERROR_NOT_FOUND || error == ERROR_FILE_NOT_FOUND)
+                {
+                    error = httpServerUriNotFoundCallback(connection, uri);
+                }
+                else if (error != NO_ERROR)
+                {
+                    // return httpServerUriErrorCallback(connection, uri, error);
+                }
+                handled = true;
+                break;
+            }
         }
-    }
+        if (handled)
+            break;
 
-    if (!strcmp(uri, "/") || !strcmp(uri, "index.shtm"))
-    {
-        uri = "/index.html";
-    }
-    if (!strcmp(uri, "/web") || !strcmp(uri, "/web/"))
-    {
-        uri = "/web/index.html";
-    }
+        if (!strcmp(uri, "/") || !strcmp(uri, "index.shtm"))
+        {
+            uri = "/index.html";
+        }
 
-    char_t *newUri = custom_asprintf("%s%s", client_ctx->settings->core.wwwdir, uri);
+        if (!strncmp(uri, "/web", 4) && (uri[4] == '\0' || uri[strlen(uri) - 1] == '/' || !strchr(uri, '.')))
+        {
+            uri = "/web/index.html";
+        }
 
-    error = httpSendResponse(connection, newUri);
-    free(newUri);
-    return error;
-}
+        char_t *newUri = custom_asprintf("%s%s", client_ctx->settings->core.wwwdir, uri);
 
-error_t httpServerUriNotFoundCallback(HttpConnection *connection, const char_t *uri)
-{
-    error_t error = NO_ERROR;
+        error = httpSendResponse(connection, newUri);
+        free(newUri);
+        /* code */
+    } while (0);
 
-    error = httpSendErrorResponse(connection, 404,
-                                  "The requested page could not be found");
-
-    /*
-    char_t *newUri = custom_asprintf("%s/404.html", get_settings()->core.wwwdir);
-    error = httpSendResponse(connection, newUri);
-    free(newUri);
-    */
-
+    TRACE_DEBUG("Stopped server request to %s, request %" PRIuSIZE "\r\n", uri, openRequests);
+    openRequestsLast--;
     return error;
 }
 
@@ -406,7 +423,7 @@ error_t httpServerTlsInitCallback(HttpConnection *connection, TlsContext *tlsCon
 
     if (error)
     {
-        TRACE_ERROR("  Failed to add cert: %d\r\n", error);
+        TRACE_ERROR("  Failed to add cert: %s\r\n", error2text(error));
         return error;
     }
 
@@ -435,11 +452,10 @@ bool sanityChecks()
 {
     bool ret = true;
 
-    ret &= sanityCheckDir("core.datadir");
     ret &= sanityCheckDir("internal.datadirfull");
     ret &= sanityCheckDir("internal.wwwdirfull");
     ret &= sanityCheckDir("internal.contentdirfull");
-    ret &= sanityCheckDir("core.certdir");
+    ret &= sanityCheckDir("internal.certdirfull");
 
     if (!ret)
     {
@@ -453,6 +469,11 @@ bool sanityChecks()
 
 void server_init(bool test)
 {
+    if (test)
+    {
+        printf("Docker container started teddyCloud for testing, running smoke test.\r\n");
+    }
+
     mutex_manager_init();
     if (!sanityChecks())
     {
@@ -519,11 +540,11 @@ void server_init(bool test)
         return;
     }
 
+    tonies_init();
     if (get_settings()->core.tonies_json_auto_update || test)
     {
         tonies_update();
     }
-    tonies_init();
 
     systime_t last = osGetSystemTime();
     size_t openConnectionsLast = 0;

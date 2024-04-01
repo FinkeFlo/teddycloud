@@ -11,6 +11,7 @@
 #include "tls_adapter.h"
 
 #include "fs_port.h"
+#include "fs_ext.h"
 #include "server_helpers.h"
 #include "cert.h"
 
@@ -28,6 +29,8 @@
 static settings_t Settings_Overlay[MAX_OVERLAYS];
 static setting_item_t *Option_Map_Overlay[MAX_OVERLAYS];
 static uint16_t settings_size = 0;
+static char *config_file_path = NULL;
+static char *config_overlay_file_path = NULL;
 DateTime settings_last_load;
 DateTime settings_last_load_ovl;
 
@@ -55,6 +58,7 @@ static void option_map_init(uint8_t settingsId)
     OPTION_TREE_DESC("core.server", "HTTP server")
     OPTION_STRING("core.host_url", &settings->core.host_url, "http://localhost", "Host URL", "URL to teddyCloud server")
     OPTION_STRING("core.certdir", &settings->core.certdir, "certs/client", "Cert dir", "Directory to upload genuine client certificates")
+    OPTION_INTERNAL_STRING("core.configdir", &settings->core.configdir, CONFIG_BASE_PATH, "Configuration dir")
     OPTION_STRING("core.contentdir", &settings->core.contentdir, "default", "Content dir", "Directory for placing cloud content")
     OPTION_STRING("core.librarydir", &settings->core.librarydir, "library", "Library dir", "Directory of the audio library")
     OPTION_STRING("core.datadir", &settings->core.datadir, "data", "Data dir", "Base directory for 'contentdir', 'firmwaredir' and 'wwwdir' when they are relative")
@@ -78,11 +82,11 @@ static void option_map_init(uint8_t settingsId)
     /* settings for HTTPS/cloud client */
     OPTION_TREE_DESC("core.client_cert", "Cloud client certificates")
     OPTION_TREE_DESC("core.client_cert.file", "File certificates")
-    OPTION_STRING("core.client_cert.file.ca", &settings->core.client_cert.file.ca, "certs/client/ca.der", "Client CA", "Client CA")
+    OPTION_STRING("core.client_cert.file.ca", &settings->core.client_cert.file.ca, "certs/client/ca.der", "Client CA", "Client Certificate Authority")
     OPTION_STRING("core.client_cert.file.crt", &settings->core.client_cert.file.crt, "certs/client/client.der", "Client certificate", "Client certificate")
     OPTION_STRING("core.client_cert.file.key", &settings->core.client_cert.file.key, "certs/client/private.der", "Client key", "Client key")
     OPTION_TREE_DESC("core.client_cert.data", "Raw certificates")
-    OPTION_INTERNAL_STRING("core.client_cert.data.ca", &settings->core.client_cert.data.ca, "", "Client CA")
+    OPTION_INTERNAL_STRING("core.client_cert.data.ca", &settings->core.client_cert.data.ca, "", "Client Certificate Authority")
     OPTION_INTERNAL_STRING("core.client_cert.data.crt", &settings->core.client_cert.data.crt, "", "Client certificate data")
     OPTION_INTERNAL_STRING("core.client_cert.data.key", &settings->core.client_cert.data.key, "", "Client key data")
 
@@ -101,6 +105,7 @@ static void option_map_init(uint8_t settingsId)
     OPTION_INTERNAL_STRING("internal.client.ca", &settings->internal.client.ca, "", "Client CA")
     OPTION_INTERNAL_STRING("internal.client.crt", &settings->internal.client.crt, "", "Client certificate data")
     OPTION_INTERNAL_STRING("internal.client.key", &settings->internal.client.key, "", "Client key data")
+    OPTION_INTERNAL_BOOL("internal.autogen_certs", &settings->internal.autogen_certs, TRUE, "Generate certificates if missing")
 
     OPTION_INTERNAL_BOOL("internal.exit", &settings->internal.exit, FALSE, "Exit the server")
     OPTION_INTERNAL_SIGNED("internal.returncode", &settings->internal.returncode, 0, -128, 127, "Returncode when exiting")
@@ -108,7 +113,11 @@ static void option_map_init(uint8_t settingsId)
     OPTION_INTERNAL_BOOL("internal.config_used", &settings->internal.config_used, FALSE, "Config used?")
     OPTION_INTERNAL_BOOL("internal.config_changed", &settings->internal.config_changed, FALSE, "Config changed and unsaved?")
     OPTION_INTERNAL_BOOL("internal.logColorSupport", &settings->internal.logColorSupport, FALSE, "Terminal supports color (log)")
+    OPTION_INTERNAL_STRING("internal.basedir", &settings->internal.basedir, BASE_PATH, "basedir")
+    OPTION_INTERNAL_STRING("internal.basedirfull", &settings->internal.basedirfull, "", "basedirfull")
     OPTION_INTERNAL_STRING("internal.cwd", &settings->internal.cwd, "", "current working dir (cwd)")
+    OPTION_INTERNAL_STRING("internal.certdirfull", &settings->internal.certdirfull, "", "Directory where the certs are placed (absolute)")
+    OPTION_INTERNAL_STRING("internal.configdirfull", &settings->internal.configdirfull, "", "Directory where the config is placed (absolute)")
     OPTION_INTERNAL_STRING("internal.contentdirrel", &settings->internal.contentdirrel, "", "Directory where cloud content is placed (relative)")
     OPTION_INTERNAL_STRING("internal.contentdirfull", &settings->internal.contentdirfull, "", "Directory where cloud content is placed (absolute)")
     OPTION_INTERNAL_STRING("internal.librarydirfull", &settings->internal.librarydirfull, "", "Directory of the audio library (absolute)")
@@ -151,29 +160,37 @@ static void option_map_init(uint8_t settingsId)
     OPTION_INTERNAL_UNSIGNED("internal.toniebox_firmware.otaVersionEu", &settings->internal.toniebox_firmware.otaVersionEu, 0, 0, 0, "Firmware EU ota version")
     OPTION_INTERNAL_UNSIGNED("internal.toniebox_firmware.otaVersionPd", &settings->internal.toniebox_firmware.otaVersionPd, 0, 0, 0, "Firmware PD ota version")
 
+    OPTION_INTERNAL_U64_ARRAY("internal.freshnessCache", &settings->internal.freshnessCache, 0, "Cache for freshnessCheck")
+
     OPTION_INTERNAL_UNSIGNED("internal.last_connection", &settings->internal.last_connection, 0, 0, 0, "Last connection timestamp")
+    OPTION_INTERNAL_STRING("internal.last_ruid", &settings->internal.last_ruid, "ffffffffffffffff", "Last rUID")
     OPTION_INTERNAL_BOOL("internal.online", &settings->internal.online, FALSE, "Check if box is online")
 
     OPTION_TREE_DESC("cloud", "Cloud")
     OPTION_BOOL("cloud.enabled", &settings->cloud.enabled, FALSE, "Cloud enabled", "Generally enable cloud operation")
     OPTION_STRING("cloud.remote_hostname", &settings->cloud.remote_hostname, "prod.de.tbs.toys", "Cloud hostname", "Hostname of remote cloud server")
     OPTION_UNSIGNED("cloud.remote_port", &settings->cloud.remote_port, 443, 1, 65535, "Cloud port", "Port of remote cloud server")
-    OPTION_BOOL("cloud.enableV1Claim", &settings->cloud.enableV1Claim, TRUE, "Forward 'claim'", "Forward 'claim' queries to tonies cloud")
+    OPTION_BOOL("cloud.enableV1Claim", &settings->cloud.enableV1Claim, TRUE, "Forward 'claim'", "Forward 'claim' queries to claim tonies in the household in the tonies cloud")
     OPTION_BOOL("cloud.enableV1CloudReset", &settings->cloud.enableV1CloudReset, FALSE, "Forward 'cloudReset'", "Forward 'cloudReset' queries to tonies cloud")
-    OPTION_BOOL("cloud.enableV1FreshnessCheck", &settings->cloud.enableV1FreshnessCheck, TRUE, "Forward 'freshnessCheck'", "Forward 'freshnessCheck' queries to tonies cloud")
+    OPTION_BOOL("cloud.enableV1FreshnessCheck", &settings->cloud.enableV1FreshnessCheck, TRUE, "Forward 'freshnessCheck'", "Forward 'freshnessCheck' queries to mark new content as updated to tonies cloud")
     OPTION_BOOL("cloud.enableV1Log", &settings->cloud.enableV1Log, FALSE, "Forward 'log'", "Forward 'log' queries to tonies cloud")
     OPTION_BOOL("cloud.enableV1Time", &settings->cloud.enableV1Time, FALSE, "Forward 'time'", "Forward 'time' queries to tonies cloud")
     OPTION_BOOL("cloud.enableV1Ota", &settings->cloud.enableV1Ota, FALSE, "Forward 'ota'", "Forward 'ota' queries to tonies cloud")
-    OPTION_BOOL("cloud.enableV2Content", &settings->cloud.enableV2Content, TRUE, "Forward 'content'", "Forward 'content' queries to tonies cloud")
-    OPTION_BOOL("cloud.cacheContent", &settings->cloud.cacheContent, FALSE, "Cache content", "Cache cloud content on local server")
+    OPTION_BOOL("cloud.enableV2Content", &settings->cloud.enableV2Content, TRUE, "Forward 'content'", "Forward 'content' queries to download content from the tonies cloud")
+    OPTION_BOOL("cloud.cacheContent", &settings->cloud.cacheContent, TRUE, "Cache content", "Cache cloud content on local server")
+    OPTION_BOOL("cloud.cacheToLibrary", &settings->cloud.cacheToLibrary, TRUE, "Cache to library", "Cache cloud content to library")
     OPTION_BOOL("cloud.markCustomTagByPass", &settings->cloud.markCustomTagByPass, TRUE, "Autodetect custom tags", "Automatically mark custom tags by password")
     OPTION_BOOL("cloud.prioCustomContent", &settings->cloud.prioCustomContent, TRUE, "Prioritize custom content", "Prioritize custom content over tonies content (force update)")
     OPTION_BOOL("cloud.updateOnLowerAudioId", &settings->cloud.updateOnLowerAudioId, TRUE, "Update content on lower audio id", "Update content on a lower audio id")
-    OPTION_BOOL("cloud.dumpRuidAuthContentJson", &settings->cloud.dumpRuidAuthContentJson, FALSE, "Dump rUID/auth", "Dump the rUID and authentication into the content JSON.")
-    OPTION_UNSIGNED("cloud.ffmpeg_stream_buffer_ms", &settings->cloud.ffmpeg_stream_buffer_ms, 5000, 0, 60000, "Stream buffer ms", "Stream buffer for ffmpeg based streaming.")
+    OPTION_BOOL("cloud.dumpRuidAuthContentJson", &settings->cloud.dumpRuidAuthContentJson, TRUE, "Dump rUID/auth", "Dump the rUID and authentication into the content JSON.")
+
+    OPTION_TREE_DESC("encode", "TAF encoding")
+    OPTION_UNSIGNED("encode.bitrate", &settings->encode.bitrate, 96, 0, 256, "Opus bitrate", "Opus bitrate, tested 64, 96(default), 128, 192, 256 - be aware that this increases the TAF size!")
+    OPTION_UNSIGNED("encode.ffmpeg_stream_buffer_ms", &settings->encode.ffmpeg_stream_buffer_ms, 1000, 0, 60000, "Stream buffer ms", "Stream buffer for ffmpeg based streaming.")
+    OPTION_BOOL("encode.ffmpeg_stream_restart", &settings->encode.ffmpeg_stream_restart, TRUE, "Stream force restart", "If a stream is continued by the box, a new file is forced. This has the cost of a slower restart, but does not play the old buffered content and deletes the previous stream data on the box.")
 
     OPTION_TREE_DESC("toniebox", "Toniebox")
-    OPTION_BOOL("toniebox.overrideCloud", &settings->toniebox.overrideCloud, TRUE, "Override cloud settings", "Override tonies cloud settings")
+    OPTION_BOOL("toniebox.overrideCloud", &settings->toniebox.overrideCloud, TRUE, "Override cloud settings", "Override tonies cloud settings for the toniebox with those set here")
     OPTION_UNSIGNED("toniebox.max_vol_spk", &settings->toniebox.max_vol_spk, 3, 0, 3, "Limit speaker volume", "Limit speaker volume (0-3)")
     OPTION_UNSIGNED("toniebox.max_vol_hdp", &settings->toniebox.max_vol_hdp, 3, 0, 3, "Limit headphone volume", "Limit headphone volume (0-3)")
     OPTION_BOOL("toniebox.slap_enabled", &settings->toniebox.slap_enabled, TRUE, "Slap to skip", "Enable track skip via slapping gesture")
@@ -249,6 +266,13 @@ void overlay_settings_init()
                 break;
             case TYPE_STRING:
                 *((char **)opt->ptr) = strdup(*((char **)opt_src->ptr));
+                break;
+            case TYPE_U64_ARRAY:
+                if (opt_src->size > 0)
+                {
+                    *((uint64_t **)opt->ptr) = osAllocMem(sizeof(uint64_t *) * opt_src->size);
+                    osMemcpy(*((uint64_t **)opt->ptr), *((uint64_t **)opt_src->ptr), sizeof(uint64_t *) * opt_src->size);
+                }
                 break;
             default:
                 break;
@@ -338,18 +362,29 @@ uint8_t get_overlay_id(const char *overlay_unique_id)
 
 void settings_resolve_dir(char **resolvedPath, char *path, char *basePath)
 {
-    if (path[0] == '/')
+    if (path[0] == PATH_SEPARATOR_LINUX || (osStrlen(path) > 1 && path[1] == ':' && path[2] == PATH_SEPARATOR_WINDOWS))
     {
         snprintf(*resolvedPath, 255, "%s", path);
     }
     else
     {
-        snprintf(*resolvedPath, 255, "%s/%s", basePath, path);
+        if (path[0] == '\0')
+        {
+            snprintf(*resolvedPath, 255, "%s", basePath);
+        }
+        else
+        {
+            snprintf(*resolvedPath, 255, "%s%c%s", basePath, PATH_SEPARATOR, path);
+        }
     }
+    fsFixPath(*resolvedPath);
 }
 
 void settings_generate_internal_dirs(settings_t *settings)
 {
+    free(settings->internal.basedirfull);
+    free(settings->internal.certdirfull);
+    free(settings->internal.configdirfull);
     free(settings->internal.contentdirrel);
     free(settings->internal.contentdirfull);
     free(settings->internal.librarydirfull);
@@ -357,6 +392,9 @@ void settings_generate_internal_dirs(settings_t *settings)
     free(settings->internal.wwwdirfull);
     free(settings->internal.firmwaredirfull);
 
+    settings->internal.basedirfull = osAllocMem(256);
+    settings->internal.certdirfull = osAllocMem(256);
+    settings->internal.configdirfull = osAllocMem(256);
     settings->internal.contentdirrel = osAllocMem(256);
     settings->internal.contentdirfull = osAllocMem(256);
     settings->internal.librarydirfull = osAllocMem(256);
@@ -365,8 +403,11 @@ void settings_generate_internal_dirs(settings_t *settings)
     settings->internal.firmwaredirfull = osAllocMem(256);
 
     char *tmpPath = osAllocMem(256);
+    settings_resolve_dir(&settings->internal.basedirfull, settings->internal.basedir, settings->internal.cwd);
 
-    settings_resolve_dir(&settings->internal.datadirfull, settings->core.datadir, settings->internal.cwd);
+    settings_resolve_dir(&settings->internal.certdirfull, settings->core.certdir, settings->internal.basedirfull);
+    settings_resolve_dir(&settings->internal.datadirfull, settings->core.datadir, settings->internal.basedirfull);
+    settings_resolve_dir(&settings->internal.configdirfull, settings->core.configdir, settings->internal.basedirfull);
 
     settings_resolve_dir(&settings->internal.wwwdirfull, settings->core.wwwdir, settings->internal.datadirfull);
     settings_resolve_dir(&settings->internal.firmwaredirfull, settings->core.firmwaredir, settings->internal.datadirfull);
@@ -385,6 +426,12 @@ void settings_changed()
 {
     Settings_Overlay[0].internal.config_changed = true;
     settings_generate_internal_dirs(get_settings());
+    if (config_file_path != NULL)
+        osFreeMem(config_file_path);
+    if (config_overlay_file_path != NULL)
+        osFreeMem(config_overlay_file_path);
+    config_file_path = custom_asprintf("%s%c%s", settings_get_string("internal.configdirfull"), PATH_SEPARATOR, CONFIG_FILE);
+    config_overlay_file_path = custom_asprintf("%s%c%s", settings_get_string("internal.configdirfull"), PATH_SEPARATOR, CONFIG_OVERLAY_FILE);
     settings_load_ovl(true);
 }
 
@@ -410,12 +457,27 @@ void settings_deinit(uint8_t overlayNumber)
                 osFreeMem(*((char **)opt->ptr));
             }
             break;
+        case TYPE_U64_ARRAY:
+            if (opt->size > 0)
+            {
+                osFreeMem(*((uint64_t **)opt->ptr));
+                opt->size = 0;
+            }
+            break;
         default:
             break;
         }
         pos++;
     }
     Settings_Overlay[overlayNumber].internal.config_init = false;
+
+    if (overlayNumber == 0)
+    {
+        osFreeMem(config_file_path);
+        config_file_path = NULL;
+        osFreeMem(config_overlay_file_path);
+        config_overlay_file_path = NULL;
+    }
 
     osFreeMem(Option_Map_Overlay[overlayNumber]);
     Option_Map_Overlay[overlayNumber] = NULL;
@@ -429,8 +491,9 @@ void settings_deinit_all()
     }
 }
 
-error_t settings_init(char *cwd)
+error_t settings_init(const char *cwd, const char *base_dir)
 {
+    bool autogen_certs = Settings_Overlay[0].internal.autogen_certs;
     option_map_init(0);
 
     Settings_Overlay[0].log.level = LOGLEVEL_INFO;
@@ -464,12 +527,20 @@ error_t settings_init(char *cwd)
             TRACE_DEBUG("  %s = %s\r\n", opt->option_name, opt->init.string_value);
             *((char **)opt->ptr) = strdup(opt->init.string_value);
             break;
+        case TYPE_U64_ARRAY:
+            TRACE_DEBUG("  %s = size(%" PRIuSIZE ")\r\n", opt->option_name, opt->size);
+            if (opt->size > 0)
+            {
+                *((uint64_t **)opt->ptr) = osAllocMem(sizeof(uint64_t *) * opt->size);
+            }
+            break;
         default:
             break;
         }
         pos++;
     }
     settings_set_string("internal.cwd", cwd);
+    settings_set_string("internal.basedir", base_dir);
 
     settings_set_string("internal.version.id", BUILD_VERSION);
     settings_set_string("internal.version.git_sha_short", BUILD_GIT_SHORT_SHA);
@@ -484,6 +555,7 @@ error_t settings_init(char *cwd)
     settings_set_string("internal.version.v_full", BUILD_FULL_NAME_FULL);
 
     settings_set_bool("internal.logColorSupport", supportsAnsiColors());
+    settings_set_bool("internal.autogen_certs", autogen_certs);
 
     Settings_Overlay[0].internal.config_init = true;
     Settings_Overlay[0].internal.config_used = true;
@@ -513,7 +585,7 @@ error_t settings_save()
 
 error_t settings_save_ovl(bool overlay)
 {
-    char_t *config_path = (!overlay ? CONFIG_PATH : CONFIG_OVERLAY_PATH);
+    char_t *config_path = (!overlay ? config_file_path : config_overlay_file_path);
 
     TRACE_INFO("Save settings to %s\r\n", config_path);
     FsFile *file = fsOpenFile(config_path, FS_FILE_MODE_WRITE | FS_FILE_MODE_TRUNC);
@@ -618,7 +690,7 @@ error_t settings_load()
 
 error_t settings_load_ovl(bool overlay)
 {
-    char_t *config_path = (!overlay ? CONFIG_PATH : CONFIG_OVERLAY_PATH);
+    char_t *config_path = (!overlay ? config_file_path : config_overlay_file_path);
 
     TRACE_INFO("Load settings from %s\r\n", config_path);
 
@@ -1143,10 +1215,84 @@ bool settings_set_string_id(const char *item, const char *value, uint8_t setting
     return true;
 }
 
+uint64_t *settings_get_u64_array(const char *item, size_t *len)
+{
+    return settings_get_u64_array_id(item, 0, len);
+}
+uint64_t *settings_get_u64_array_ovl(const char *item, const char *overlay_name, size_t *len)
+{
+    return settings_get_u64_array_id(item, get_overlay_id(overlay_name), len);
+}
+uint64_t *settings_get_u64_array_id(const char *item, uint8_t settingsId, size_t *len)
+{
+    if (!item)
+    {
+        return NULL;
+    }
+
+    setting_item_t *opt = settings_get_by_name_id(item, settingsId);
+    if (!opt || opt->type != TYPE_U64_ARRAY)
+    {
+        return NULL;
+    }
+
+    *len = opt->size;
+    return *(uint64_t **)opt->ptr;
+}
+
+bool settings_set_u64_array(const char *item, const uint64_t *value, size_t len)
+{
+    return settings_set_u64_array_id(item, value, len, 0);
+}
+bool settings_set_u64_array_ovl(const char *item, const uint64_t *value, size_t len, const char *overlay_name)
+{
+    return settings_set_u64_array_id(item, value, len, get_overlay_id(overlay_name));
+}
+bool settings_set_u64_array_id(const char *item, const uint64_t *value, size_t len, uint8_t settingsId)
+{
+    if (!item || !value)
+    {
+        return false;
+    }
+
+    setting_item_t *opt = settings_get_by_name_id(item, settingsId);
+    if (!opt || opt->type != TYPE_U64_ARRAY)
+    {
+        return false;
+    }
+
+    uint64_t **ptr = (uint64_t **)opt->ptr;
+    if (*ptr)
+    {
+        if (opt->size > 0)
+        {
+            opt->size = 0;
+            osFreeMem(*ptr);
+        }
+    }
+
+    *ptr = osAllocMem(sizeof(uint64_t) * len);
+    if (*ptr)
+    {
+        osMemcpy(*ptr, value, sizeof(uint64_t) * len);
+    }
+    opt->size = len;
+
+    if (settingsId > 0)
+    {
+        opt->overlayed = true;
+    }
+    if (!opt->internal)
+    {
+        settings_changed();
+    }
+    return true;
+}
+
 void settings_loop()
 {
     FsFileStat stat;
-    if (fsGetFileStat(CONFIG_PATH, &stat) == NO_ERROR)
+    if (fsGetFileStat(config_file_path, &stat) == NO_ERROR)
     {
         if (compareDateTime(&stat.modified, &settings_last_load))
         {
@@ -1154,7 +1300,7 @@ void settings_loop()
             settings_load();
         }
     }
-    if (fsGetFileStat(CONFIG_OVERLAY_PATH, &stat) == NO_ERROR)
+    if (fsGetFileStat(config_overlay_file_path, &stat) == NO_ERROR)
     {
         if (compareDateTime(&stat.modified, &settings_last_load_ovl))
         {
@@ -1224,7 +1370,7 @@ error_t settings_load_certs_id(uint8_t settingsId)
         return NO_ERROR;
     }
 
-    if (settings_try_load_certs_id(settingsId) != NO_ERROR)
+    if (get_settings_id(settingsId)->internal.autogen_certs && settings_try_load_certs_id(settingsId) != NO_ERROR)
     {
         TRACE_INFO("********************************************\r\n");
         TRACE_INFO("   No certificates found. Generating.\r\n");

@@ -282,6 +282,10 @@ void rtnlEvent(HttpConnection *connection, TonieRtnlRPC *rpc, client_ctx_t *clie
             mqtt_sendBoxEvent("TagInvalid", "", client_ctx);
             break;
         case RTNL3_TYPE_PLAYBACK_STOPPED:
+            if (!client_ctx->state->box.ffmpeg_ctx.quit && client_ctx->state->tag.valid)
+            {
+                client_ctx->state->box.ffmpeg_ctx.active = false;
+            }
             client_ctx->state->tag.audio_id = 0;
             client_ctx->state->tag.valid = false;
             client_ctx->state->tag.uid = 0;
@@ -336,6 +340,7 @@ void rtnlEvent(HttpConnection *connection, TonieRtnlRPC *rpc, client_ctx_t *clie
             sse_sendEvent("TagValid", buffer, true);
             mqtt_sendBoxEvent("TagValid", buffer, client_ctx);
             mqtt_sendBoxEvent("TagInvalid", "", client_ctx);
+            setLastUid(client_ctx->state->tag.uid, client_ctx->settings);
         }
         else if ((rpc->log2->function_group == RTNL2_FUGR_AUDIO_A && (rpc->log2->function == RTNL2_FUNC_AUDIO_ID_CC3200 || rpc->log2->function == RTNL2_FUNC_AUDIO_ID_ESP32)) || (rpc->log2->function_group == RTNL2_FUGR_AUDIO_B && rpc->log2->function == RTNL2_FUNC_AUDIO_ID))
         {
