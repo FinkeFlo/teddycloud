@@ -1236,34 +1236,7 @@
                 }
             }
 
-            async renameFile() {
-                //const oldName = window.prompt('Enter the current file name');
-                const newName = window.prompt('Enter the new file name');
-                if (!oldName || !newName) {
-                    return;
-                }
-            
-                try {
-                    const response = await fetch(`/api/fileRename`, {
-                        method: 'POST',
-                        headers: {
-                            'Content-Type': 'application/json',
-                        },
-                        body: JSON.stringify({ oldName: oldName.trim(), newName: newName.trim() }),
-                    });
-            
-                    if (response.ok) {
-                        this.fetchFileIndex(this.state.path, this.state.mode, true); // Refresh files
-                        this.showSuccess(true);
-                    } else {
-                        alert('Failed to rename file');
-                        this.showSuccess(false);
-                    }
-                } catch (err) {
-                    console.error('There was an error!', err);
-                }
-            }
-
+    
 
             getParentPath(path) {
                 const trimmedPath = path.endsWith('/') ? path.slice(0, -1) : path;
@@ -1306,8 +1279,17 @@
             }
 
             async renameSelectedFile() {
-                const oldName = window.prompt('Enter the current file name');
+
+                    // Überprüfen, ob genau eine Datei ausgewählt ist
+                if (this.state.selectedFiles.length !== 1) {
+                    alert('Please select exactly one file to rename');
+                    return;
+                }
+
+                // Der alte Name wird aus der einzigen ausgewählten Datei übernommen
+                const oldName = this.state.selectedFiles[0].name;
                 const newName = window.prompt('Enter the new file name');
+
                 if (!oldName || !newName) {
                     return;
                 }
@@ -1318,7 +1300,7 @@
                         headers: {
                             'Content-Type': 'application/json',
                         },
-                        body: JSON.stringify({ oldName: oldName.trim(), newName: newName.trim() }),
+                        body: JSON.stringify({ path: this.state.path, oldName: oldName.trim(), newName: newName.trim() }),
                     });
             
                     if (response.ok) {
