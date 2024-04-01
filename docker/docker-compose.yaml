@@ -8,11 +8,11 @@ services:
       - 180:80 #optional
       - 1443:443 #Port is needed for the connection for the box
     volumes:
-      - certs:/teddycloud_dev/certs
-      - config:/teddycloud_dev/config
-      - content:/teddycloud_dev/data/content
-      - library:/teddycloud_dev/data/library
-      - firmware:/teddycloud_dev/data/firmware
+      - certs:/teddycloud/certs
+      - config:/teddycloud/config
+      - content:/teddycloud/data/content
+      - library:/teddycloud/data/library
+      - firmware:/teddycloud/data/firmware
     restart: unless-stopped
 volumes:
   certs:
