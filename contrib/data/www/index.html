@@ -1027,6 +1027,7 @@
                 this.fileInputRef = React.createRef();
                 this.onDrop = this.onDrop.bind(this);
                 this.deleteSelectedFiles = this.deleteSelectedFiles.bind(this);
+                this.renameSelectedFile = this.renameSelectedFile.bind(this);
                 this.toggleFileSelection = this.toggleFileSelection.bind(this);
                 this.assignNextUnknown = this.assignNextUnknown.bind(this);
                 this.selectAllFiles = this.selectAllFiles.bind(this);
@@ -1235,6 +1236,35 @@
                 }
             }
 
+            async renameFile() {
+                //const oldName = window.prompt('Enter the current file name');
+                const newName = window.prompt('Enter the new file name');
+                if (!oldName || !newName) {
+                    return;
+                }
+            
+                try {
+                    const response = await fetch(`/api/fileRename`, {
+                        method: 'POST',
+                        headers: {
+                            'Content-Type': 'application/json',
+                        },
+                        body: JSON.stringify({ oldName: oldName.trim(), newName: newName.trim() }),
+                    });
+            
+                    if (response.ok) {
+                        this.fetchFileIndex(this.state.path, this.state.mode, true); // Refresh files
+                        this.showSuccess(true);
+                    } else {
+                        alert('Failed to rename file');
+                        this.showSuccess(false);
+                    }
+                } catch (err) {
+                    console.error('There was an error!', err);
+                }
+            }
+
+
             getParentPath(path) {
                 const trimmedPath = path.endsWith('/') ? path.slice(0, -1) : path;
                 const parts = trimmedPath.split('/');
@@ -1323,6 +1353,7 @@
                             <button className="button" onClick={this.createDirectory}>Create Directory</button>
                             <button className="button" onClick={this.deleteSelectedFiles}>Delete</button>
                             <button className="button" onClick={this.assignNextUnknown}>Assign Unknown</button>
+                            <button className="button" onClick={this.renameSelectedFile}>Rename file</button>
                             <button className="button" onClick={this.toggleAudioEncoder}>
                                 {this.state.showAudioEncoder ? 'Hide Audio Encoder' : 'Show Audio Encoder'}
                             </button>
