@@ -32,8 +32,10 @@
 #define _NET_CONFIG_H
 
 #include "settings.h"
-#include "toniebox_state.h"
-#define AUTH_TOKEN_LENGTH 32
+#include "toniebox_state_type.h"
+
+#define TONIE_AUTH_TOKEN_LENGTH 32
+#define JWT_AUTH_TOKEN_LENGTH 32
 
 typedef struct
 {
@@ -44,7 +46,7 @@ typedef struct
 
 typedef struct
 {
-    uint8_t authentication_token[AUTH_TOKEN_LENGTH];
+    uint8_t authentication_token[TONIE_AUTH_TOKEN_LENGTH];
     client_ctx_t client_ctx;
 
 } http_connection_private_t;
@@ -187,7 +189,7 @@ typedef struct
 #define BSD_SOCKET_SUPPORT DISABLED
 
 // Number of sockets that can be opened simultaneously
-#define SOCKET_MAX_COUNT 10
+#define SOCKET_MAX_COUNT 32
 
 // LLMNR responder support
 #define LLMNR_RESPONDER_SUPPORT ENABLED
